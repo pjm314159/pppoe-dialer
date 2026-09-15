@@ -275,6 +275,6 @@ fn print_help() {
     println!("options:");
     println!("  --config <path>   use a configuration file other than <exe dir>/pppoe.toml");
     println!();
-    println!("The configuration file is TOML; see pppoe.toml.example for every field.");
+    println!("The configuration file is TOML; all fields are documented in pppoe.toml.");
     println!("Logs are written to the configured directory (default: <exe dir>/logs).");
 }

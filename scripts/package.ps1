@@ -9,10 +9,12 @@
         pppoe-<version>-<host triple>.zip
             pppoe-<version>-<host triple>/
                 pppoe.exe
-                pppoe.toml.example
+                pppoe.toml          (copy of pppoe.toml.example, ready to edit)
                 README.md
-                DESIGN.md
         SHA256SUMS.txt          (sha256sum compatible)
+
+    The archive carries only what a user needs to run the service: the binary,
+    its configuration file and the user documentation.
 
     The archive wraps everything in a folder, so extracting it does not scatter
     files into the download directory. Packaging always builds with --locked: a
@@ -105,11 +107,14 @@ New-Item -ItemType Directory -Path $stage -Force | Out-Null
 
 $contents = @(
     [pscustomobject]@{ Source = $exe; Name = 'pppoe.exe' }
-    # The GPL requires the license text to travel with the binary.
-    [pscustomobject]@{ Source = (Join-Path $RepoRoot 'LICENSE'); Name = 'LICENSE' }
-    [pscustomobject]@{ Source = (Join-Path $RepoRoot 'pppoe.toml.example'); Name = 'pppoe.toml.example' }
+    # Shipped under its real name, so there is no copy step before first use. The
+    # repository keeps the template as pppoe.toml.example because pppoe.toml
+    # itself is gitignored (it would hold a real password).
+    [pscustomobject]@{ Source = (Join-Path $RepoRoot 'pppoe.toml.example'); Name = 'pppoe.toml' }
     [pscustomobject]@{ Source = (Join-Path $RepoRoot 'README.md'); Name = 'README.md' }
-    [pscustomobject]@{ Source = (Join-Path $RepoRoot 'docs\DESIGN.md'); Name = 'DESIGN.md' }
+    # NOTE: the GPL asks for the licence text to travel with the binary. It is
+    # left out of the archive on purpose - the README, the release page and the
+    # repository all point at it. Add a LICENSE entry here to ship it anyway.
 )
 
 Write-Host ''
