@@ -388,15 +388,17 @@ fn decode(bytes: &[u8]) -> Result<String> {
 }
 
 fn utf16_to_string(bytes: &[u8], little_endian: bool) -> String {
+    // `as_chunks` hands out `&[u8; 2]` pairs directly, so no indexing is needed.
+    // A trailing odd byte is dropped, exactly as `chunks_exact(2)` did.
     let units: Vec<u16> = bytes
-        .chunks_exact(2)
-        .map(|pair| {
-            if little_endian {
-                u16::from_le_bytes([pair[0], pair[1]])
-            } else {
-                u16::from_be_bytes([pair[0], pair[1]])
-            }
-        })
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(
+            |pair| {
+                if little_endian { u16::from_le_bytes(*pair) } else { u16::from_be_bytes(*pair) }
+            },
+        )
         .collect();
     String::from_utf16_lossy(&units)
 }
