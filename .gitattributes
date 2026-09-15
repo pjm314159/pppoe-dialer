@@ -1,0 +1,16 @@
+# Normalise line endings inside the repository, check them out natively.
+* text=auto eol=lf
+
+# Windows-only helpers keep CRLF: they are read by Windows PowerShell 5.1 and by
+# editors like Notepad, which still handle LF poorly.
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# The git hook is executed by Git for Windows' sh, which must see LF.
+.githooks/* text eol=lf
+
+# Never mangle binaries (a .pbk is a Windows phone book, also binary-ish).
+*.exe binary
+*.zip binary
+*.pbk binary

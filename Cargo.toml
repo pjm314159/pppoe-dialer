@@ -1,0 +1,56 @@
+[package]
+name = "pppoe"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+# Dependency policy
+# ----------------
+# This program is a long-running background service on personal computers, so
+# the dependency tree is deliberately kept minimal to keep both the binary size
+# and the runtime memory footprint small:
+#   * `windows`      - the Win32 API surface (RAS, IP Helper, SCM, event log)
+#   * `serde`+`toml` - the TOML configuration file
+# Everything else (logging, service dispatching, error handling, back-off) is
+# implemented in-tree. No async runtime, no logging framework, no `anyhow`.
+[dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_NetworkManagement_Rras",
+    "Win32_Networking_WinSock",
+    "Win32_Security",
+    "Win32_System_Console",
+    "Win32_System_EventLog",
+    "Win32_System_Registry",
+    "Win32_System_Services",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+# Hard guarantees enforced by the compiler, not by review. The release profile
+# uses `panic = "abort"`, so there is no unwind net: an accidental unwrap or
+# panic in a background thread would take the whole service (and its logging)
+# down. Everything that could panic on purpose is therefore rejected:
+#   * `unwrap` / `expect` -> impossible to write, tests included;
+#   * `panic!` / `todo!` / `unimplemented!` -> impossible to leave behind;
+#   * `dbg!` -> impossible to forget in a commit.
+# Enforced by `cargo clippy --all-targets -- -D warnings`, which
+# scripts/check.ps1 (the pre-commit hook and CI) runs. See docs/DESIGN.md 9.11.
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+
+[profile.release]
+codegen-units = 1
+panic = "abort"
+strip = true
+opt-level = 3
+lto = true

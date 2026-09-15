@@ -1,0 +1,12 @@
+# rustfmt configuration.
+#
+# Kept deliberately small: the goal is a formatter run that a human would have
+# written anyway, so that `cargo fmt --check` can be a hard gate in CI and in
+# the pre-commit hook without producing noisy or unreadable diffs.
+edition = "2024"
+max_width = 100
+
+# Use the wider of the "small item" heuristics: keeps method chains, struct
+# literals and argument lists on one line when they fit, instead of splitting
+# them across four lines the moment they exceed the default narrow budget.
+use_small_heuristics = "Max"

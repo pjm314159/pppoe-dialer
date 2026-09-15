@@ -1,0 +1,197 @@
+# =============================================================================
+# PPPoE auto dialer service - configuration example
+# -----------------------------------------------------------------------------
+# Usage: copy this file to `pppoe.toml` next to `pppoe.exe`, or pass another
+# location with `--config <path>`.
+#
+#   PowerShell (administrator):
+#     Copy-Item pppoe.toml.example pppoe.toml
+#     icacls pppoe.toml /inheritance:r /grant:r "BUILTIN\Administrators:F" "NT AUTHORITY\SYSTEM:F"
+#
+# Restart the service after editing:
+#     sc.exe stop PppoeDialer ; sc.exe start PppoeDialer
+#
+# Behaviour summary:
+#   1) cable detection and connection state are driven by Windows event
+#      callbacks (RasConnectionNotification + NotifyIpInterfaceChange);
+#      the service never polls;
+#   2) stopping the service does NOT hang the broadband connection up - it stays
+#      online, and the next start reports "already online" and skips dialling;
+#   3) the account name and the password are never written to the log file or to
+#      the Windows event log.
+#
+# WARNING: this file contains the password in clear text. Restrict its
+# permissions with the `icacls` command shown above.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# [service] service registration
+# -----------------------------------------------------------------------------
+[service]
+# SCM service name. It must match the name compiled into the binary, otherwise
+# `install` reports an error instead of creating a second, differently named
+# service. It is also used as the Windows event log source name.
+name = "PppoeDialer"
+
+# Friendly name shown in services.msc.
+display_name = "PPPoE Auto Dialer"
+
+# Description written into the SCM.
+description = "Keeps a PPPoE broadband connection online (cable check + auto reconnect)"
+
+
+# -----------------------------------------------------------------------------
+# [dial] dialling
+# -----------------------------------------------------------------------------
+[dial]
+# Name of the broadband connection, i.e. the phone book entry, for example
+# "Broadband Connection" or "Dr.COM". This is not a secret and is logged, which
+# makes troubleshooting much easier.
+entry_name = "Dr.COM"
+
+# Broadband account.
+# The program NEVER writes this value to the log file or the Windows event log;
+# configuration summaries show it as *** only.
+username = "12345678"
+
+# Broadband password. Same rule: never logged, always shown as ***.
+password = "12345678"
+
+# Phone book (.pbk) path.
+#   - empty "" (default): use the phone book of the account the process runs as.
+#     A service runs as LocalSystem, whose phone book is
+#     C:\Windows\System32\config\systemprofile\AppData\Roaming\Microsoft\Network\Connections\Pbk\rasphone.pbk
+#     That file usually does NOT contain the connection you created on the
+#     desktop - which is why `create_entry_if_missing` is on by default: the
+#     service creates the entry it needs in this phone book.
+#   - alternative: point it at the shared "all users" phone book
+#     "C:\\ProgramData\\Microsoft\\Network\\Connections\\Pbk\\rasphone.pbk"
+#     after ticking "Allow other users to use this connection" in the properties
+#     of the broadband connection. Do this if you prefer to manage the entry
+#     yourself (then set `create_entry_if_missing = false`).
+#     (Inside a TOML basic string a backslash must be doubled; single quoted
+#     literal strings need no escaping - see the note at the end of this file.)
+pbk_path = ""
+
+# Create the phone book entry when it is missing, using the PPPoE template
+# ("WAN Miniport (PPPOE)", TCP/IP over PPP).
+#
+# ON BY DEFAULT - and that is what you normally want: a service runs as
+# LocalSystem, so it cannot see the broadband connection created on the desktop.
+# Without this the very first dial would always fail with error 623.
+# The entry is created once, in the phone book selected by `pbk_path` above;
+# if it already exists, nothing happens.
+#
+# Set it to false only if you manage the phone book yourself (for example when
+# `pbk_path` points at the shared "all users" phone book).
+create_entry_if_missing = true
+
+# Upper bound for one dial attempt, in seconds. A blocking RasDial has no
+# timeout of its own, so a watchdog thread interrupts the attempt after this
+# delay and the service just retries.
+# Note 1: do not set this too low - PPPoE authentication takes a few seconds.
+# Note 2: stopping the service never aborts an in-flight dial attempt (that
+#         could kill a connection which is just coming up), so this value also
+#         defines the worst case duration of `sc stop`.
+dial_timeout_secs = 90
+
+# Optional dial domain. Usually empty for PPPoE.
+domain = ""
+
+
+# -----------------------------------------------------------------------------
+# [link_check] network cable detection
+# -----------------------------------------------------------------------------
+[link_check]
+# Check the cable before dialling. When disabled the service dials directly.
+enabled = true
+
+# Which card decides the verdict. Empty "" means "any wired ethernet card".
+# On a machine with more than one real card, put a distinctive part of the card
+# name here; the match is a case insensitive substring of the alias or of the
+# description.
+# Run `pppoe.exe list-adapters` to see every interface. Rows with `filter = true`
+# are NDIS filter shims (WFP / Npcap / QoS / Hyper-V) and are always ignored;
+# rows with `hw = true` are real network cards and are preferred.
+adapter_name = ""
+
+# Interface types taking part in the verdict. Only "ethernet" (IF_TYPE 6) is
+# supported. Wireless cards are excluded on purpose: their media state is
+# frequently reported as Unknown by the driver.
+interface_types = ["ethernet"]
+
+
+# -----------------------------------------------------------------------------
+# [monitor] reconnect and notification policy
+# -----------------------------------------------------------------------------
+# This service does NOT poll. Connection state changes arrive as Windows event
+# callbacks:
+#   - dial / disconnect -> RasConnectionNotification (all RAS connections)
+#   - cable plug/unplug -> NotifyIpInterfaceChange (IP interface changes)
+# The worker thread blocks in WaitForMultipleObjects and only evaluates the
+# system state when it is woken up (or when a back-off deadline expires).
+[monitor]
+# Delay before the first retry after a failed dial attempt, in seconds.
+reconnect_delay_secs = 5
+
+# Upper bound of the exponential back-off, in seconds
+# (5 -> 10 -> 20 -> 40 ... capped here).
+max_backoff_secs = 300
+
+# Random jitter added to each back-off delay, in seconds, so that several
+# machines do not retry in lockstep.
+backoff_jitter_secs = 3
+
+# Coalescing window in milliseconds: notifications arriving inside this window
+# trigger a single state evaluation. Pulling a cable, for example, produces
+# several interface updates at once.
+event_debounce_ms = 500
+
+# Safety re-check interval in seconds. 0 (the default) means "pure event driven"
+# and is what you normally want.
+# A value >= 30 makes the worker wake up once in a while even without any
+# notification, as a guard against a driver that never reports media state
+# changes. If the log shows safety re-checks but no event driven wake-ups, the
+# machine's notifications are broken and such a value is worth keeping.
+safety_recheck_secs = 0
+
+
+# -----------------------------------------------------------------------------
+# [log] logging
+# -----------------------------------------------------------------------------
+[log]
+# Log directory. A relative path is resolved against the directory that holds
+# pppoe.exe (for example "logs"); an absolute path is used as-is.
+dir = "logs"
+
+# Log level: error | warn | info | debug | trace
+# `info` for normal operation, `debug` while troubleshooting.
+level = "info"
+
+# Rotation: daily (one file per day) or never (a single growing file).
+rotation = "daily"
+
+# Number of files kept; the oldest ones are removed at start-up.
+# daily + 14 keeps the last two weeks.
+max_files = 14
+
+# Also write records of level info and above to the Windows event log
+# (Event Viewer -> Windows Logs -> Application, source = [service] name).
+event_log = true
+
+
+# =============================================================================
+# Appendix: writing Windows paths in TOML
+# -----------------------------------------------------------------------------
+# In a TOML basic string (double quotes) a backslash is an escape character, so a
+# Windows path has to double them:
+#     pbk_path = "C:\\ProgramData\\Microsoft\\Network\\Connections\\Pbk\\rasphone.pbk"
+# A literal string (single quotes) needs no escaping:
+#     pbk_path = 'C:\ProgramData\Microsoft\Network\Connections\Pbk\rasphone.pbk'
+# Both forms are equivalent; pick one.
+#
+# The file is read as UTF-8; UTF-8 with BOM and UTF-16 (both byte orders) are
+# detected and converted automatically, so saving it from Notepad cannot break
+# the service.
+# =============================================================================

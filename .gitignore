@@ -1,0 +1,12 @@
+/target
+/dist
+/logs
+
+# Never commit a real configuration: it contains the broadband password in clear text.
+# pppoe.toml.example is the template that IS committed.
+pppoe.toml
+
+# Local tooling state. Planning notes here can quote real configuration values
+# (account, password, phone book paths), so it must never be published.
+.codebuddy/
+.idea

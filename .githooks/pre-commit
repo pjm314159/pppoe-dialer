@@ -1,0 +1,34 @@
+#!/bin/sh
+# =============================================================================
+# Pre-commit gate.
+#
+# Runs the same validation as CI, in "fast" mode: formatting, clippy (with
+# -D warnings, which also enforces the unwrap/expect/panic denies declared in
+# Cargo.toml) and the unit tests. The release build is left to CI, which keeps a
+# commit quick.
+#
+# Activate it once per clone:
+#
+#     pwsh -File scripts/install-hooks.ps1
+#     # or manually:
+#     git config core.hooksPath .githooks
+#
+# Bypass it for a deliberate work-in-progress commit:
+#
+#     git commit --no-verify
+# =============================================================================
+set -e
+
+if ! root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    echo "pre-commit: not inside a git work tree, skipping" >&2
+    exit 0
+fi
+cd "$root"
+
+if command -v pwsh >/dev/null 2>&1; then
+    PS=pwsh
+else
+    PS=powershell.exe
+fi
+
+exec "$PS" -NoProfile -ExecutionPolicy Bypass -File scripts/check.ps1 -Fast

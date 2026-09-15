@@ -1,0 +1,119 @@
+name: Release
+
+# Publishing is Windows only: the artifact is a Windows service executable.
+# Push a tag like v0.1.0 to build, validate and publish it.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Optional tag to label the build with (artifacts are uploaded, no release is created)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: build and publish (windows x86_64)
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          # Full history so `gh release create --generate-notes` can build notes.
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      # A tag that disagrees with Cargo.toml would publish a mislabelled
+      # artifact, which is worse than not publishing at all.
+      - name: Check that the tag matches Cargo.toml
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          . ./scripts/common.ps1
+          $crate = Get-CrateMetadata -Manifest (Join-Path $RepoRoot 'Cargo.toml')
+          if ("v$($crate.Version)" -ne $env:GITHUB_REF_NAME) {
+            throw "tag $env:GITHUB_REF_NAME does not match the Cargo.toml version $($crate.Version)"
+          }
+          Write-Host "tag and Cargo.toml agree on v$($crate.Version)"
+
+      # Never publish something that fails the gate: formatting, clippy
+      # (-D warnings, which includes the unwrap/expect/panic denies), tests and a
+      # release build with the binary smoke tested.
+      - name: Validate
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/check.ps1 -Locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # The validation step already built target/release/pppoe.exe.
+      - name: Package
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1 -SkipBuild
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-x86_64
+          path: |
+            dist/*.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish the GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = $env:GITHUB_REF_NAME
+          $assets = @(
+            Get-ChildItem -Path dist -File |
+              Where-Object { $_.Name -like '*.zip' -or $_.Name -eq 'SHA256SUMS.txt' } |
+              ForEach-Object { $_.FullName }
+          )
+          if ($assets.Count -eq 0) { throw 'no release assets were produced' }
+
+          # Re-running the workflow for a tag must replace the assets instead of
+          # failing on "release already exists".
+          gh release view $tag --repo $env:GITHUB_REPOSITORY 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "release $tag already exists - replacing its assets"
+            gh release upload $tag @assets --clobber --repo $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } else {
+            Write-Host "creating release $tag"
+            gh release create $tag @assets `
+              --title "pppoe $tag" `
+              --generate-notes `
+              --repo $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+          Write-Host ''
+          Write-Host 'published assets:'
+          $assets | ForEach-Object { Write-Host "  $_" }
