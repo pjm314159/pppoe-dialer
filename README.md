@@ -34,13 +34,12 @@
 ```text
 D:\pppoe\
 ├── pppoe.exe
-├── pppoe.toml.example
-├── README.md
-└── LICENSE
+├── pppoe.toml
+└── README.md
 ```
 
-`pppoe.toml.example` 是配置模板（复制成 `pppoe.toml` 使用），`pppoe.exe` 与 `pppoe.toml`
-必须放在同一个目录里。
+`pppoe.toml` 就是配置文件本身（内含逐行注释），解压后直接编辑它即可；
+`pppoe.exe` 与 `pppoe.toml` 必须放在同一个目录里。
 
 > 下载页同时提供 `SHA256SUMS.txt`，可用它校验文件是否完整：
 >
@@ -53,7 +52,6 @@ D:\pppoe\
 ### 2. 写配置
 
 ```powershell
-Copy-Item D:\pppoe\pppoe.toml.example D:\pppoe\pppoe.toml
 notepad D:\pppoe\pppoe.toml
 ```
 
@@ -62,12 +60,12 @@ notepad D:\pppoe\pppoe.toml
 ```toml
 [dial]
 entry_name = "Dr.COM"        # 连接的名称，随便起个认得出来的即可
-username   = "你的宽带账号"
-password   = "你的宽带密码"
+username   = "12345678"      # ← 换成你的宽带账号
+password   = "12345678"      # ← 换成你的宽带密码
 ```
 
 > 配置文件包含明文密码，建议按第 3 步限制它的访问权限。
-> 详细字段（重连间隔、日志级别、指定网卡等）在 `pppoe.toml.example` 里有逐行注释。
+> 详细字段（重连间隔、日志级别、指定网卡等）在 `pppoe.toml` 里都有逐行注释。
 
 ### 3. 限制配置文件的权限
 
@@ -124,7 +122,7 @@ D:\pppoe\pppoe.exe uninstall          # 停止并卸载服务
 
 ## 配置说明
 
-完整注释见 `pppoe.toml.example`。最常用的几项：
+完整注释见 `pppoe.toml`。最常用的几项：
 
 | 配置项 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -275,6 +273,10 @@ Copy-Item <新版>\pppoe.exe D:\pppoe\pppoe.exe -Force
 sc.exe start PppoeDialer
 ```
 
+> ⚠️ 新版的压缩包里带的是**空模板** `pppoe.toml`（账号密码是占位值）。
+> 解压时不要直接覆盖 `D:\pppoe\pppoe.toml`，否则会把已有配置冲掉 ——
+> 只取 `pppoe.exe` 即可，或者先把配置文件备份出来。
+
 **卸载**：
 
 ```powershell
@@ -296,7 +298,10 @@ Remove-Item -Recurse D:\pppoe     # 确认不再使用后，删掉目录（含�
 ## 许可证
 
 本项目以 **GNU General Public License v3.0 或更新版本（GPL-3.0-or-later）** 发布，
-完整条文见 [`LICENSE`](LICENSE)。
+完整条文见代码仓库中的 [`LICENSE`](LICENSE)。
+
+> 发布压缩包里只含 `pppoe.exe`、`pppoe.toml` 和 `README.md`，不含许可证文件；
+> 许可证全文请从代码仓库或发布页获取。
 
 你可以自由地使用、修改和再分发本程序；但再分发时必须以同样的许可证开放源代码，
 并且本程序**不提供任何担保**。

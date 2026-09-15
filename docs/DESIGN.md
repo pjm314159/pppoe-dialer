@@ -321,7 +321,8 @@ sequenceDiagram
   服务运行时 CWD 是 `C:\Windows\System32`，因此**必须**用
   `std::env::current_exe()?.parent()` 定位，**不可**依赖相对路径/CWD。
 - 可用 `--config <path>` 覆盖（便于现场把配置放到受控目录）。
-- 配置示例：`pppoe.toml.example`，部署时复制为 `pppoe.toml` 并填写真实凭据。
+- 配置模板：仓库内为 `pppoe.toml.example`（`pppoe.toml` 被 gitignore，因为它装着真实密码）；
+  发布包内则以 `pppoe.toml` 之名提供，解压后直接编辑即可。
 
 ### 7.2 字段定义
 
@@ -1204,9 +1205,9 @@ Select-String -Path D:\pppoe\logs\*.log.* -Pattern "你的账号|你的密码"
 | 文件 | 说明 |
 | --- | --- |
 | `docs/DESIGN.md` | 本文档（开发者文档，不面向最终用户） |
-| `LICENSE` | GPL-3.0 官方原文；`Cargo.toml` 声明 `GPL-3.0-or-later`，发布包必须随附 |
-| `CHANGELOG.md` | 发布历史（Keep a Changelog 结构）；GitHub Release 的说明正文取自这里，发布包也随附 |
-| `pppoe.toml.example` | 带注释的配置示例（ASCII） |
+| `LICENSE` | GPL-3.0 官方原文；`Cargo.toml` 声明 `GPL-3.0-or-later`。发布包内**不随附**（README 与发布页指向仓库）；如需随附，在 `scripts/package.ps1` 的 `$contents` 里加一行即可 |
+| `CHANGELOG.md` | 发布历史（Keep a Changelog 结构）；GitHub Release 的说明正文取自这里。发布包内不随附，仓库内可查 |
+| `pppoe.toml.example` | 带注释的配置模板（ASCII）；`package.ps1` 打包时以 `pppoe.toml` 之名放进压缩包 |
 | `README.md` | **面向使用者**：安装 / 配置 / 排障 / 卸载，不含任何开发流程内容 |
 | `Cargo.toml` | 依赖与 features（`windows` + `serde` + `toml`） |
 | `src/main.rs` | 子命令分发；服务模式下调用 `service::run()` |

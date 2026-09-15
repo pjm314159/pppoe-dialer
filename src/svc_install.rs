@@ -147,7 +147,7 @@ pub fn install(config: &Config) -> Result<()> {
     println!();
     println!("next steps:");
     println!(
-        "  1. copy pppoe.toml.example to {} and fill in the connection details",
+        "  1. fill in the connection details in {}",
         exe_dir.join(DEFAULT_FILE_NAME).display()
     );
     println!("  2. restrict its permissions:");

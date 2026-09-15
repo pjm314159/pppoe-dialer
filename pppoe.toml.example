@@ -1,11 +1,14 @@
 # =============================================================================
-# PPPoE auto dialer service - configuration example
+# PPPoE auto dialer service - configuration
 # -----------------------------------------------------------------------------
-# Usage: copy this file to `pppoe.toml` next to `pppoe.exe`, or pass another
-# location with `--config <path>`.
+# The release archive already ships this file as `pppoe.toml` next to
+# `pppoe.exe`, so edit it in place. Building from source instead? Copy it first:
 #
-#   PowerShell (administrator):
 #     Copy-Item pppoe.toml.example pppoe.toml
+#
+# A different location can be used with `--config <path>`.
+#
+# Restrict its permissions (PowerShell as administrator):
 #     icacls pppoe.toml /inheritance:r /grant:r "BUILTIN\Administrators:F" "NT AUTHORITY\SYSTEM:F"
 #
 # Restart the service after editing:
