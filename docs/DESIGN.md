@@ -1205,6 +1205,7 @@ Select-String -Path D:\pppoe\logs\*.log.* -Pattern "你的账号|你的密码"
 | --- | --- |
 | `docs/DESIGN.md` | 本文档（开发者文档，不面向最终用户） |
 | `LICENSE` | GPL-3.0 官方原文；`Cargo.toml` 声明 `GPL-3.0-or-later`，发布包必须随附 |
+| `CHANGELOG.md` | 发布历史（Keep a Changelog 结构）；GitHub Release 的说明正文取自这里，发布包也随附 |
 | `pppoe.toml.example` | 带注释的配置示例（ASCII） |
 | `README.md` | **面向使用者**：安装 / 配置 / 排障 / 卸载，不含任何开发流程内容 |
 | `Cargo.toml` | 依赖与 features（`windows` + `serde` + `toml`） |
@@ -1217,3 +1218,69 @@ Select-String -Path D:\pppoe\logs\*.log.* -Pattern "你的账号|你的密码"
 | `src/worker.rs` | 事件驱动拨号状态机（`WaitForMultipleObjects`，零轮询） |
 | `src/service.rs` | Windows 服务生命周期（停止不挂断） |
 | `src/svc_install.rs` | 服务安装 / 卸载 / 崩溃自动重启 |
+
+---
+
+## 15. 分支模型与发布流程
+
+### 15.1 分支
+
+| 分支 | 作用 | 规则 |
+| --- | --- | --- |
+| `main` | 只保存已发布（或即将发布）的稳定状态 | 只接受来自 `dev` 的合并；每个发布点在 `main` 上打 `v<版本>` 标签 |
+| `dev` | 日常开发 | 所有改动先提交到这里；`ci.yml` 对任意分支生效，推送即跑 |
+
+```text
+dev:   A --- B --- C --- D              (日常提交，每次 push 都跑 CI)
+                \       \
+main:  o --------●-------●------------>
+                 ↑ merge   ↑ merge + tag v0.1.0 / v0.2.0
+```
+
+合并到 `main` 用 `--no-ff`，保留合并点 —— 让「这批改动是作为一个整体发布的」在历史里可见：
+
+```powershell
+git switch dev
+# ... 提交、跑 scripts/check.ps1 ...
+git switch main
+git merge --no-ff dev -m "merge(dev): <本批改动的主题>"
+```
+
+### 15.2 发布步骤
+
+```powershell
+# 1. 在 dev 上收尾版本号与 CHANGELOG，然后合并到 main
+#    Cargo.toml   : version = "0.2.0"
+#    CHANGELOG.md : 把 [Unreleased] 整理成新的 "## [0.2.0] - <日期>" 段
+git switch dev
+git commit -am "chore(release): 0.2.0"
+git switch main
+git merge --no-ff dev -m "merge(dev): release 0.2.0"
+
+# 2. 打标签并推送（标签必须指向 main 上的提交）
+git tag -a v0.2.0 -m "pppoe 0.2.0"
+git push origin main
+git push origin v0.2.0
+```
+
+推送 `v*` 标签触发 `.github/workflows/release.yml`，顺序为：
+
+1. 校验标签与 `Cargo.toml` 的 `version` 一致（不一致直接失败，绝不发布贴错标签的产物）；
+2. 跑完整门禁 `scripts/check.ps1 -Locked`；
+3. `scripts/package.ps1 -SkipBuild` 打包并生成 `SHA256SUMS.txt`；
+4. 建 GitHub Release：**说明正文取自 `CHANGELOG.md` 中该版本的那一节**
+   （`scripts/common.ps1` 的 `Get-ChangelogSection`），找不到该节时退回 `--generate-notes`；
+   标签已存在时改为替换 assets 并同步刷新说明正文。
+
+因此**发版前必须先写好 CHANGELOG**，否则发布页只能退回自动生成的提交列表。
+
+### 15.3 CHANGELOG 维护约定
+
+`CHANGELOG.md` 采用 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 结构 + 语义化版本号，
+**正文用英文**（与提交信息、标签、GitHub Release 保持一致）：
+
+- 每个用户可感知的改动追加到 `## [Unreleased]` 下，分类用
+  `Added` / `Changed` / `Deprecated` / `Removed` / `Fixed` / `Security`；
+- 发版时把 `[Unreleased]` 的内容提升为 `## [x.y.z] - YYYY-MM-DD`，并保留一个空的 `[Unreleased]`；
+- 版本对比链接集中放在文件末尾的引用块（如 `[0.2.0]: .../compare/v0.1.0...v0.2.0`）。
+  注意 `Get-ChangelogSection` 遇到引用块即认为本节结束，所以**链接必须放在文件最后**。
