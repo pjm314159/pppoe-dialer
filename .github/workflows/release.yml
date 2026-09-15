@@ -90,6 +90,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
+          . ./scripts/common.ps1
           $tag = $env:GITHUB_REF_NAME
           $assets = @(
             Get-ChildItem -Path dist -File |
@@ -98,6 +99,24 @@ jobs:
           )
           if ($assets.Count -eq 0) { throw 'no release assets were produced' }
 
+          # The curated notes for this tag live in CHANGELOG.md. Without a
+          # matching section there is nothing to publish but the commit list.
+          $crate = Get-CrateMetadata -Manifest (Join-Path $RepoRoot 'Cargo.toml')
+          $section = Get-ChangelogSection -Path (Join-Path $RepoRoot 'CHANGELOG.md') -Version $crate.Version
+          $notesArgs = @('--generate-notes')
+          if ($section) {
+            $notesFile = Join-Path $env:RUNNER_TEMP 'release-notes.md'
+            # UTF-8 without a BOM, otherwise the first character of the notes
+            # renders as a stray byte.
+            [System.IO.File]::WriteAllText(
+              $notesFile, $section, (New-Object System.Text.UTF8Encoding($false))
+            )
+            $notesArgs = @('--notes-file', $notesFile)
+            Write-Host "release notes taken from the CHANGELOG.md section for v$($crate.Version)"
+          } else {
+            Write-Host "CHANGELOG.md has no section for v$($crate.Version) - falling back to --generate-notes"
+          }
+
           # Re-running the workflow for a tag must replace the assets instead of
           # failing on "release already exists".
           gh release view $tag --repo $env:GITHUB_REPOSITORY 2>$null | Out-Null
@@ -105,11 +124,15 @@ jobs:
             Write-Host "release $tag already exists - replacing its assets"
             gh release upload $tag @assets --clobber --repo $env:GITHUB_REPOSITORY
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if ($section) {
+              gh release edit $tag @notesArgs --repo $env:GITHUB_REPOSITORY
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            }
           } else {
             Write-Host "creating release $tag"
             gh release create $tag @assets `
               --title "pppoe $tag" `
-              --generate-notes `
+              @notesArgs `
               --repo $env:GITHUB_REPOSITORY
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }

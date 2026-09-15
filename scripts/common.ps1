@@ -47,6 +47,51 @@ function Get-CrateMetadata {
 }
 
 # -----------------------------------------------------------------------------
+# CHANGELOG.md
+# -----------------------------------------------------------------------------
+
+function Get-ChangelogSection {
+    <#
+    .SYNOPSIS
+    Extract the `## [<version>]` section of CHANGELOG.md.
+
+    The release workflow uses this to publish the curated notes instead of
+    GitHub's list of commit subjects. Returns $null when the file or the section
+    is missing, so the caller can fall back to --generate-notes.
+
+    A heading looks like `## [0.1.0]` or `## [0.1.0] - 2026-09-15`. The section
+    ends at the next `## ` heading or at the link reference block at the bottom
+    of the file.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Version
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+
+    # Anchored so that "1.0.0" cannot match inside "11.0.0".
+    $heading = '^##\s+\[?' + [regex]::Escape($Version) + '\]?(\s|$)'
+    $lines = Get-Content -LiteralPath $Path -Encoding UTF8
+    $collecting = $false
+    $body = New-Object System.Collections.Generic.List[string]
+
+    foreach ($line in $lines) {
+        if (-not $collecting) {
+            if ($line -match $heading) { $collecting = $true }
+            continue
+        }
+        if ($line -match '^##\s') { break }
+        if ($line -match '^\[[^\]]+\]:\s*\S') { break }
+        $body.Add($line)
+    }
+
+    $text = ($body -join "`n").Trim()
+    if (-not $text) { return $null }
+    return $text
+}
+
+# -----------------------------------------------------------------------------
 # Cargo discovery
 # -----------------------------------------------------------------------------
 

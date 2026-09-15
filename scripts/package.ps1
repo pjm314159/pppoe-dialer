@@ -9,6 +9,8 @@
         pppoe-<version>-<host triple>.zip
             pppoe-<version>-<host triple>/
                 pppoe.exe
+                LICENSE
+                CHANGELOG.md
                 pppoe.toml.example
                 README.md
                 DESIGN.md
@@ -107,6 +109,8 @@ $contents = @(
     [pscustomobject]@{ Source = $exe; Name = 'pppoe.exe' }
     # The GPL requires the license text to travel with the binary.
     [pscustomobject]@{ Source = (Join-Path $RepoRoot 'LICENSE'); Name = 'LICENSE' }
+    # Release history: users should be able to read what changed without a network.
+    [pscustomobject]@{ Source = (Join-Path $RepoRoot 'CHANGELOG.md'); Name = 'CHANGELOG.md' }
     [pscustomobject]@{ Source = (Join-Path $RepoRoot 'pppoe.toml.example'); Name = 'pppoe.toml.example' }
     [pscustomobject]@{ Source = (Join-Path $RepoRoot 'README.md'); Name = 'README.md' }
     [pscustomobject]@{ Source = (Join-Path $RepoRoot 'docs\DESIGN.md'); Name = 'DESIGN.md' }
