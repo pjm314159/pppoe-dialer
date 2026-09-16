@@ -138,6 +138,10 @@ struct Sink {
     rotation: Rotation,
     /// Day (`YYYY-MM-DD`) the currently open file belongs to.
     day: String,
+    /// Oldest files above this count are removed - at start-up and again on
+    /// every rotation, because a service that runs for months never reaches
+    /// `init` a second time.
+    max_files: usize,
     /// Event source handle kept as `usize` so the logger stays `Send + Sync`.
     event_source: Option<usize>,
     event_log: bool,
@@ -184,6 +188,7 @@ pub fn init(settings: Settings<'_>) -> Result<()> {
             file_name: settings.file_name.to_string(),
             rotation: settings.rotation,
             day: String::new(),
+            max_files: settings.max_files,
             event_source,
             event_log: settings.event_log,
             file_error_reported: false,
@@ -294,7 +299,17 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 impl Sink {
     fn write_file(&mut self, day: &str, line: &str) {
         if self.rotation == Rotation::Daily && self.day != day {
+            // Rotating onto a new day. `self.day` is empty until the first record
+            // has been written, so this only counts as a rotation once a file has
+            // actually been open.
+            let rotated = !self.day.is_empty();
             self.file = None;
+            // A service that runs for months never reaches `init` again, so the
+            // retention limit is enforced here too. Without this the file count
+            // would only ever come down on a restart.
+            if rotated && self.max_files > 0 {
+                prune(&self.dir, &self.file_name, self.max_files);
+            }
         }
         if self.file.is_none() {
             let name = match self.rotation {
@@ -464,6 +479,7 @@ mod tests {
                 file_name: String::from("pppoe.log"),
                 rotation: Rotation::Never,
                 day: String::new(),
+                max_files: 14,
                 event_source: None,
                 event_log: false,
                 file_error_reported: true,
@@ -520,5 +536,40 @@ mod tests {
         assert_eq!(stamp.len(), 23, "unexpected timestamp: {stamp}");
         assert_eq!(day.len(), 10);
         assert_eq!(&stamp[..10], day.as_str());
+    }
+
+    #[test]
+    fn prune_keeps_the_newest_files_only() {
+        let dir = std::env::temp_dir().join("pppoe-logger-prune-test");
+        let _ = fs::remove_dir_all(&dir);
+        if fs::create_dir_all(&dir).is_err() {
+            // A missing or read-only temp directory must not fail the suite.
+            return;
+        }
+
+        // `prune` ranks by modification time, so the files are written a little
+        // apart to get a deterministic order.
+        for index in 0..5u32 {
+            let name = format!("pppoe.log.2026-09-{:02}", index + 1);
+            let _ = fs::write(dir.join(name), "2026-09-15 00:00:00.000 INFO  test\r\n");
+            std::thread::sleep(std::time::Duration::from_millis(30));
+        }
+        // Anything that is not one of our log files has to survive.
+        let _ = fs::write(dir.join("keep-me.txt"), "not a log file");
+
+        prune(&dir, "pppoe.log", 2);
+
+        let mut left: Vec<String> = fs::read_dir(&dir)
+            .map(|entries| {
+                entries
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        left.sort();
+        assert_eq!(left, vec!["keep-me.txt", "pppoe.log.2026-09-04", "pppoe.log.2026-09-05"]);
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }
