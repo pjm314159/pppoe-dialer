@@ -1210,7 +1210,7 @@ Select-String -Path D:\pppoe\logs\*.log.* -Pattern "你的账号|你的密码"
 | `CHANGELOG.md` | 发布历史（Keep a Changelog 结构）；GitHub Release 的说明正文取自这里。发布包内不随附，仓库内可查 |
 | `pppoe.toml.example` | 带注释的配置模板（ASCII）；`package.ps1` 打包时以 `pppoe.toml` 之名放进压缩包 |
 | `README.md` | **面向使用者**：安装 / 配置 / 排障 / 卸载，不含任何开发流程内容 |
-| `install.ps1` | 装机脚本（随发布包分发）：UAC 提权 → 检查 `pppoe.exe` / `pppoe.toml` → 校验账号密码不是占位值 → `install` + `start`；`-DryRun` 只检查不改动 |
+| `install.ps1` | 装机脚本（随发布包分发）：UAC 提权 → 检查 `pppoe.exe` / `pppoe.toml` → 校验账号密码已填写（示例值 `12345678` 不算缺失）→ `install` + `start`；`-DryRun` 只检查不改动 |
 | `uninstall.ps1` | 卸载脚本（随发布包分发）：UAC 提权 → 检查服务是否已注册 → `uninstall`；刻意不断开宽带连接 |
 | `Cargo.toml` | 依赖与 features（`windows` + `serde` + `toml`） |
 | `src/main.rs` | 子命令分发；服务模式下调用 `service::run()` |

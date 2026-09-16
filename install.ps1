@@ -9,9 +9,8 @@
     The script:
       1. re-launches itself with administrator rights if needed (one UAC prompt);
       2. checks that pppoe.exe and pppoe.toml are there;
-      3. checks that the broadband account name and the password are no longer the
-         placeholder values the archive ships, and prints exactly what to write
-         when they still are;
+      3. checks that the broadband account name and the password are present, and
+         prints exactly what to write when they are not;
       4. registers the service and starts it.
 
     Nothing on the system is touched when -DryRun is used.
@@ -30,8 +29,7 @@
     Register the service but leave it stopped.
 
 .PARAMETER SkipConfigCheck
-    Install even though the account name or the password still look like
-    placeholders.
+    Install even though the account name or the password is missing.
 
 .PARAMETER LockConfig
     Restrict pppoe.toml to Administrators and SYSTEM with icacls. Off by default,
@@ -65,7 +63,10 @@ param(
 $ErrorActionPreference = 'Stop'
 
 # Values that mean "the account data has not been written yet".
-$Placeholders = @('', '12345678', 'changeme', 'change_me', 'your-account', 'your-password')
+# `12345678` is deliberately NOT in this list: it is the sample value in the
+# shipped pppoe.toml and it is a perfectly plausible account name, so treating it
+# as "not filled in" would block a legitimate setup.
+$Placeholders = @('', 'changeme', 'change_me', 'your-account', 'your-password')
 
 function Write-Step { param([string]$Text) Write-Host ''; Write-Host "==> $Text" -ForegroundColor Cyan }
 function Write-Ok { param([string]$Text) Write-Host "    OK      $Text" -ForegroundColor Green }
@@ -162,15 +163,11 @@ $account = Read-ConfigValue -Text $text -Key 'username'
 $secret = Read-ConfigValue -Text $text -Key 'password'
 
 $problems = New-Object System.Collections.Generic.List[string]
-if ($null -eq $account) {
-    $problems.Add('username is missing')
-} elseif ($Placeholders -contains $account) {
-    $problems.Add('username is still a placeholder')
+if ($null -eq $account -or $Placeholders -contains $account) {
+    $problems.Add('username is not set')
 }
-if ($null -eq $secret) {
-    $problems.Add('password is missing')
-} elseif ($Placeholders -contains $secret) {
-    $problems.Add('password is still a placeholder')
+if ($null -eq $secret -or $Placeholders -contains $secret) {
+    $problems.Add('password is not set')
 }
 
 if ($problems.Count -gt 0) {
@@ -259,6 +256,9 @@ if ($DryRun) {
 } else {
     Write-Host 'done' -ForegroundColor Green
 }
+Write-Host 'remember: [dial] username and password in'
+Write-Host "  $Config"
+Write-Host '          have to be your real broadband account. The log never prints them.'
 Write-Host 'useful commands:'
 Write-Host '  status    : sc.exe query PppoeDialer'
 Write-Host "  logs      : Get-Content `"$(Join-Path (Split-Path -Parent $ExePath) 'logs')\pppoe.log.*`" -Encoding UTF8 -Tail 50"
