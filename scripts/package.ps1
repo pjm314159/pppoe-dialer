@@ -10,6 +10,8 @@
             pppoe-<version>-<host triple>/
                 pppoe.exe
                 pppoe.toml          (copy of pppoe.toml.example, ready to edit)
+                install.ps1
+                uninstall.ps1
                 README.md
         SHA256SUMS.txt          (sha256sum compatible)
 
@@ -111,6 +113,10 @@ $contents = @(
     # repository keeps the template as pppoe.toml.example because pppoe.toml
     # itself is gitignored (it would hold a real password).
     [pscustomobject]@{ Source = (Join-Path $RepoRoot 'pppoe.toml.example'); Name = 'pppoe.toml' }
+    # The service needs an administrator to register it; these scripts do the UAC
+    # dance and check the credentials before touching the SCM.
+    [pscustomobject]@{ Source = (Join-Path $RepoRoot 'install.ps1'); Name = 'install.ps1' }
+    [pscustomobject]@{ Source = (Join-Path $RepoRoot 'uninstall.ps1'); Name = 'uninstall.ps1' }
     [pscustomobject]@{ Source = (Join-Path $RepoRoot 'README.md'); Name = 'README.md' }
     # NOTE: the GPL asks for the licence text to travel with the binary. It is
     # left out of the archive on purpose - the README, the release page and the

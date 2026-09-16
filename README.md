@@ -35,11 +35,13 @@
 D:\pppoe\
 ├── pppoe.exe
 ├── pppoe.toml
+├── install.ps1
+├── uninstall.ps1
 └── README.md
 ```
 
 `pppoe.toml` 就是配置文件本身（内含逐行注释），解压后直接编辑它即可；
-`pppoe.exe` 与 `pppoe.toml` 必须放在同一个目录里。
+`pppoe.exe` 与 `pppoe.toml` 必须放在同一个目录里。两个 `.ps1` 脚本会自动申请管理员权限。
 
 > 下载页同时提供 `SHA256SUMS.txt`，可用它校验文件是否完整：
 >
@@ -88,7 +90,18 @@ D:\pppoe\pppoe.exe dial-once
 
 ### 5. 安装并启动服务
 
-用**管理员身份**打开 PowerShell：
+**推荐用脚本**（普通 PowerShell 窗口即可，脚本会自己弹出 UAC 申请管理员权限）：
+
+```powershell
+cd D:\pppoe
+.\install.ps1
+```
+
+脚本依次做四件事：申请管理员权限 → 检查 `pppoe.exe` 与 `pppoe.toml` 是否齐全 →
+**检查账号和密码是否还是占位值**（若还是，会直接告诉你该改哪两行并拒绝安装）→ 注册服务并启动。
+想先看它要做什么、又不改动系统：`.\install.ps1 -DryRun`。
+
+或者手动执行（需要管理员 PowerShell）：
 
 ```powershell
 D:\pppoe\pppoe.exe install     # 注册为开机自启动的服务
@@ -277,12 +290,22 @@ sc.exe start PppoeDialer
 > 解压时不要直接覆盖 `D:\pppoe\pppoe.toml`，否则会把已有配置冲掉 ——
 > 只取 `pppoe.exe` 即可，或者先把配置文件备份出来。
 
-**卸载**：
+**卸载**（推荐用脚本，同样自动申请管理员权限）：
+
+```powershell
+cd D:\pppoe
+.\uninstall.ps1
+```
+
+它会先检查服务是否已安装、请求停止、再删除注册。也可以手动执行：
 
 ```powershell
 D:\pppoe\pppoe.exe uninstall      # 先停止再删除服务，不会断网
 Remove-Item -Recurse D:\pppoe     # 确认不再使用后，删掉目录（含配置与日志）
 ```
+
+> 卸载**不会**断开宽带连接（连接由 Windows 拨号管理器持有，不归服务管），
+> 脚本会提示如何立即断开：`rasdial "Dr.COM" /disconnect`。
 
 ---
 

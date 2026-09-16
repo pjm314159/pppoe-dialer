@@ -374,7 +374,7 @@ sequenceDiagram
 | `dir` | string | `"logs"` | 日志目录，**相对于 exe 目录**；支持绝对路径 |
 | `level` | string | `"info"` | `error` \| `warn` \| `info` \| `debug` \| `trace` |
 | `rotation` | string | `"daily"` | `daily`（按天）\| `never`（单文件） |
-| `max_files` | usize | `14` | 启动时清理超过该数量的历史日志文件 |
+| `max_files` | usize | `14` | 启动时**以及每次按天轮转时**清理超过该数量的历史日志文件（`0` = 不清理） |
 | `event_log` | bool | `true` | 是否同时写 Windows 事件日志 |
 
 ### 7.3 示例（`pppoe.toml.example`）
@@ -471,7 +471,8 @@ pub fn event(level: Level, event_id: u32, target: &str, args: fmt::Arguments<'_>
    `Sink` 持有 `Option<File>`；每条记录 `write_all` + `flush`，不引入 `BufWriter`，
    内存占用恒定，且进程被强杀时已写内容不会丢。
    事件源句柄存成 `usize`（`HANDLE` 是裸指针、不是 `Send`），使 `Logger: Send + Sync` 成立。
-2. **按天轮转 + 数量上限**：文件名 `pppoe.log.YYYY-MM-DD`（`rotation = "never"` 时为 `pppoe.log`）；
+2. **按天轮转 + 数量上限**：文件名 `pppoe.log.YYYY-MM-DD`（`rotation = "never"` 时为 `pppoe.log`）——
+   **`never` 等于放弃数量上限**，因为裁剪只对多个文件有意义；
    写记录时用 `GetLocalTime()` 判断是否跨天并重新打开文件；
    `init` 时扫描目录、按修改时间保留最新 `max_files` 个、删除其余。
 3. **凭据兜底过滤（关键安全网）**：每条记录在写往**任何** sink 之前，
@@ -1128,7 +1129,7 @@ Select-String -Path D:\pppoe\logs\*.log.* -Pattern "你的账号|你的密码"
 | 模块 | 覆盖内容 |
 | --- | --- |
 | `config` | 默认值填充、未知字段忽略、`summary()`/`secrets()` **不含**凭据原文、缺凭据被拒、非法 `level`/`rotation` 被拒、`safety_recheck_secs` 边界、`interface_types` 映射、**UTF-16 与 UTF-8 BOM 解码**、`--config` 参数解析 |
-| `logger` | 级别序关系与解析、`Rotation` 解析、**凭据脱敏**（含 `***` 与保留非敏感文本）、过短凭据不参与替换、时间戳形状（长度/日期一致性） |
+| `logger` | 级别序关系与解析、`Rotation` 解析、**凭据脱敏**（含 `***` 与保留非敏感文本）、过短凭据不参与替换、时间戳形状（长度/日期一致性）、**保留数量裁剪**（只保留最新的 N 个，非本程序文件不动） |
 | `ras` | UTF-16 转换与 NUL 结尾、`copy_to_buf` 截断且保留 NUL / 不越界 / **空目标字段不 panic（`dest.len()-1` 下溢守卫）**、错误码表（691/623 不可重试、678/651 可重试、未知码兜底）、超时毫秒饱和 |
 | `link` | UTF-16 → String、网卡名子串匹配、`MediaConnectState` 映射、`describe` 稳定性、**filter shim 不是候选**、**真实网卡优先于虚拟 miniport** |
 | `worker` | backoff 倍增与封顶、成功后重置、抖动范围（200 次采样）、抖动下界 ≥1s、毫秒饱和、`safety_recheck_secs=0 → INFINITE` |
@@ -1209,6 +1210,8 @@ Select-String -Path D:\pppoe\logs\*.log.* -Pattern "你的账号|你的密码"
 | `CHANGELOG.md` | 发布历史（Keep a Changelog 结构）；GitHub Release 的说明正文取自这里。发布包内不随附，仓库内可查 |
 | `pppoe.toml.example` | 带注释的配置模板（ASCII）；`package.ps1` 打包时以 `pppoe.toml` 之名放进压缩包 |
 | `README.md` | **面向使用者**：安装 / 配置 / 排障 / 卸载，不含任何开发流程内容 |
+| `install.ps1` | 装机脚本（随发布包分发）：UAC 提权 → 检查 `pppoe.exe` / `pppoe.toml` → 校验账号密码不是占位值 → `install` + `start`；`-DryRun` 只检查不改动 |
+| `uninstall.ps1` | 卸载脚本（随发布包分发）：UAC 提权 → 检查服务是否已注册 → `uninstall`；刻意不断开宽带连接 |
 | `Cargo.toml` | 依赖与 features（`windows` + `serde` + `toml`） |
 | `src/main.rs` | 子命令分发；服务模式下调用 `service::run()` |
 | `src/error.rs` | `Error` / `Result` 别名与错误构造辅助 |
