@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-09-17
+
+### Fixed
+
+- A failed dial no longer leaves the PPPoE port busy. `RasDial` hands back a
+  connection handle even when it fails, and the documentation requires that
+  handle to be hung up ("even if `RasDial` returns a nonzero value"). The service
+  dropped it, so a dial that was interrupted - typically by the cable being
+  unplugged while the line was still being established - left the port half open.
+  Every later attempt for the same entry was then rejected with
+  `756 ERROR_DIAL_ALREADY_IN_PROGRESS` ("the specified port is already open"),
+  and because that state lives inside the RAS manager, neither stopping nor
+  uninstalling the service could clear it: only a RAS restart or a reboot did.
+
+### Added
+
+- The service now clears a stale dial attempt instead of retrying into it: on
+  `756` it hangs up the connections of its entry that never reached the connected
+  state, drops the back-off and retries immediately. Only attempts that are
+  *not* online are touched, so a working broadband link is never dropped.
+- After three consecutive blocked attempts with nothing left to abort, a warning
+  names the way out (`net stop RasMan`, or a reboot), because that means the port
+  is stuck inside the RAS manager where no connection is visible.
+- A failed dial logs the current RAS connection table at debug level.
+- Two unit tests for the stale-attempt rule.
+
+### Changed
+
+- Hanging up now waits until RAS reports the handle as invalid (polling
+  `RasGetConnectStatus`, at most five seconds) instead of returning immediately.
+  The documentation warns that dialling again - or exiting the process - right
+  after `RasHangUp` can leave the port inconsistent, which also affected the
+  `dial-once` diagnostic command.
+- The dial watchdog cancels a timed out attempt through the connection table
+  instead of calling `RasHangUp` with a NULL handle, whose meaning is not part of
+  the public documentation.
+
 ## [0.1.1] - 2026-09-16
 
 ### Added
@@ -83,6 +120,7 @@ at boot and keeps it online.
   and the next start reports "already online" instead of dialling twice.
 - Licensed under GPL-3.0-or-later.
 
-[Unreleased]: https://github.com/pjm314159/pppoe-dialer/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/pjm314159/pppoe-dialer/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/pjm314159/pppoe-dialer/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/pjm314159/pppoe-dialer/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/pjm314159/pppoe-dialer/releases/tag/v0.1.0
