@@ -20,13 +20,16 @@
 //! event, the IP interface change event and the RAS connection change event.
 //! `GetIfTable2` / `RasEnumConnectionsW` are evaluated **once per wake-up**.
 //!
-//! The connection is never hung up. It is owned by the `RasMan` service, so it
-//! survives the service (and even a crash) - by design, see `docs/DESIGN.md`.
+//! An **online** connection is never hung up: it is owned by the `RasMan`
+//! service, so it survives the service (and even a crash) - by design, see
+//! `docs/DESIGN.md`. What *is* hung up are failed and stale attempts, because a
+//! half open attempt keeps the PPPoE port busy and blocks every later dial.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use windows::Win32::Foundation::{BOOL, CloseHandle, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
+use windows::Win32::NetworkManagement::Rras::ERROR_DIAL_ALREADY_IN_PROGRESS;
 use windows::Win32::System::Threading::{CreateEventW, INFINITE, WaitForMultipleObjects};
 use windows::core::PCWSTR;
 
@@ -39,6 +42,10 @@ use crate::ras;
 /// Stack size of the worker thread. The state machine is shallow, so 256 KiB is
 /// plenty and keeps the committed memory of this idle service tiny.
 const WORKER_STACK_SIZE: usize = 256 * 1024;
+
+/// How many dial attempts may in a row be blocked by a stale attempt that could
+/// not be aborted before the operator is told to restart RAS by hand.
+const STALE_BLOCK_WARN_AFTER: u32 = 3;
 
 /// Create a Win32 event object.
 ///
@@ -172,6 +179,8 @@ pub fn run(cfg: Arc<Config>, stop: HANDLE) -> Result<()> {
     let mut backoff = Backoff::new(&cfg.monitor);
     let mut cable_down = false;
     let mut online = false;
+    // Consecutive attempts blocked by a stale dial that could not be aborted.
+    let mut blocked_attempts = 0u32;
 
     let result = loop {
         // ---------------- 1. cable -------------------------------------
@@ -254,6 +263,7 @@ pub fn run(cfg: Arc<Config>, stop: HANDLE) -> Result<()> {
             // `RasHangUpW` is never called on this path.
             Ok(_) => {
                 online = true;
+                blocked_attempts = 0;
                 backoff.reset();
                 log_info!("dial succeeded, connection \"{entry}\" is up");
             }
@@ -273,6 +283,40 @@ pub fn run(cfg: Arc<Config>, stop: HANDLE) -> Result<()> {
                         }
                     }
                     None => log_error!("dial failed: {e}"),
+                }
+
+                // Record what RAS thinks, so the next incident can be diagnosed
+                // from this log alone instead of from the Windows event log.
+                if let Ok(connections) = ras::list_connections() {
+                    log_debug!(
+                        "RAS connections after the failure: {}",
+                        ras::describe_connections(&connections)
+                    );
+                }
+
+                // 756 means a previous attempt still owns the port. Retrying
+                // alone can never succeed, so clear that attempt first and then
+                // drop the back-off, because the obstacle is gone afterwards.
+                if code == Some(ERROR_DIAL_ALREADY_IN_PROGRESS) {
+                    match ras::abort_stale_attempts(&entry) {
+                        Ok(0) => {
+                            blocked_attempts += 1;
+                            if blocked_attempts == STALE_BLOCK_WARN_AFTER {
+                                log_warn!(
+                                    "dialling has been blocked {blocked_attempts} times and no \
+                                     stale attempt could be aborted - the PPPoE port is stuck \
+                                     inside the RAS manager; restart it (net stop RasMan) or \
+                                     reboot the machine"
+                                );
+                            }
+                        }
+                        Ok(count) => {
+                            blocked_attempts = 0;
+                            backoff.reset();
+                            log_warn!("cleared {count} stale dial attempt(s), retrying now");
+                        }
+                        Err(e) => log_warn!("cannot inspect the RAS connection table: {e}"),
+                    }
                 }
 
                 let mut delay = backoff.next_delay();
