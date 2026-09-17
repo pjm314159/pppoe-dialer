@@ -261,6 +261,7 @@ Get-EventLog -LogName Application -Source PppoeDialer -Newest 20
 | 反复出现 `code=623` / `624` / `621` | 电话簿问题，见上文「坑 1」 |
 | 反复出现 `code=691` | 账号或密码不对（出于安全，日志不会回显它们） |
 | 反复出现 `code=678` / `651` | 对端无应答或网卡/驱动异常，检查网线、光猫与网卡驱动 |
+| 反复出现 `code=756`，或界面提示「**指定的端口已经打开**」 | 上一次拨号失败后 PPPoE 端口没被释放。0.1.2 起服务会自动清理残留拨号；若日志出现 `stuck inside the RAS manager` 告警，说明端口卡在 RAS 管理器内部，执行 `net stop RasMan` 后再拨号（或禁用/启用 `WAN Miniport (PPPOE)` 设备、重启机器） |
 | 一整天只有 `safety re-check` 之类的记录 | 本机网卡驱动不上报链路变化，把 `monitor.safety_recheck_secs` 设为 `300` 作为兜底 |
 | `install` 报 `OpenSCManagerW failed` | 没有用管理员权限运行 |
 | 日志里看到 `created the phone book entry "..."` | 正常，表示服务首次为你在系统电话簿里建好了连接 |

@@ -152,7 +152,7 @@ graph TD
 | --- | --- | --- |
 | 主线程 | `service_dispatcher::start` → SCM 调度；控制处理器回调 | 回调只做 `SetEvent(stop_event)` + `SetServiceStatus`，**不做任何阻塞 IO** |
 | worker 线程 | 事件驱动状态机：等待事件 → 评估状态 → 必要时拨号 | **独占调用全部 RAS 阻塞 API**（`RasDialW` 会阻塞，配合 watchdog） |
-| watchdog 线程（仅拨号期间存在） | 拨号超时保护 | `WaitForSingleObject(dial_done, dial_timeout)` 超时则 `RasHangUpW(NULL)` 打断阻塞 |
+| watchdog 线程（仅拨号期间存在） | 拨号超时保护 | `WaitForSingleObject(dial_done, dial_timeout)` 超时则枚举连接表挂断那次拨号（0.1.2 起不再使用语义未文档化的 `RasHangUpW(NULL)`，见 §9.5.1） |
 | 系统回调线程（RAS / IP Helper） | 系统内部线程调用我们的回调 | 回调内**只做 `SetEvent`**，绝不做查询/日志/加锁 |
 
 **关键设计：worker 不持有 `HRASCONN`。**
@@ -277,7 +277,7 @@ loop {
 
 // ---- Stopping ----
 // 只做资源清理：关闭事件句柄 / CancelMibChangeNotify2 / flush 日志
-// ！！！绝不调用 RasHangUpW —— 连接必须保持在线 ！！！
+// ！！！绝不挂断在线连接 —— 连接必须保持在线（失败/残留的拨号尝试另见 §9.5.1）！！！
 drop(_ip_guard);
 ```
 
@@ -602,8 +602,8 @@ pub fn to_wide(text: &str) -> Vec<u16>;
    - 返回「是否存在处于 Connected 状态的目标条目」。
 4. **拨号超时（watchdog）**：`RasDialW` 同步模式无超时参数。
    `dial()` 内创建一个 `dial_done` 事件（auto-reset）+ 一次性 watchdog 线程：
-   `WaitForSingleObject(dial_done, timeout)`；超时则 `RasHangUpW(HRASCONN::default())`
-   （传 NULL 挂断本进程建立的所有 RAS 连接 —— 此时连接尚未建立，属于打断拨号，副作用可控）。
+   `WaitForSingleObject(dial_done, timeout)`；超时则**枚举连接表并挂断该条目那次未连接的拨号**
+   （0.1.2 变更：原先给 `RasHangUpW` 传 NULL 句柄打断，但该语义并未出现在官方文档中，见 §9.5.1）。
    **watchdog 不订阅 `stop_event`**：服务停止时**不打断**正在进行的拨号（§9.5）。
 5. **`HRASCONN` 的线程约束**：底层是裸指针，**不是 `Send`**。
    `Dialed` 结构体因此不可跨线程移动；`dial()` 必须在 worker 线程内调用；
@@ -829,6 +829,34 @@ dwCountryID/Code  = 1 / 1
    - 停止最长等待时间为 `dial_timeout_secs`（默认 90s，建议 60~120）；
    - 主线程需周期性重报 `STOP_PENDING` 以避免 SCM 判无响应（§8.6 第 5 步）；
    - 控制处理器**不订阅** `stop_event` 到 watchdog 的等待集合中。
+
+#### 9.5.1 失败与残留的拨号必须挂断（0.1.2 变更）
+
+§9.5 的"不挂断"只针对**在线连接**。2026-09-17 的一次真实故障说明这条规则曾被理解得过宽：
+
+- `RasDialW` **失败时也会回填一个非 NULL 的连接句柄**，官方文档要求
+  "即使 `RasDial` 返回非零（错误）值"也必须对该句柄调用 `RasHangUp`（见 `RasDial` 文档 Remarks）。
+  旧实现把句柄直接丢弃 → 拨号被中途打断（典型诱因：**拨号过程中网线被拔**）后，
+  `PPPoE5-0` 端口停在半开状态；
+- 此后每次拨号都被 `756 ERROR_DIAL_ALREADY_IN_PROGRESS`（中文界面提示
+  "指定的端口已经打开"）秒拒，而该状态**属于 `RasMan` 而不是本进程**：
+  停止服务、卸载服务都无法释放，只能重启 `RasMan`、复位 PPPoE 设备或重启机器；
+- 实测：46 次重试、持续 1 小时 50 分无法自愈；期间 `RasEnumConnectionsW` 的**连接表是空的**，
+  `WAN Miniport (PPPOE)` 设备状态正常 —— 也就是说这个故障在"连接层"和"驱动层"都是隐形的。
+
+因此 0.1.2 起：
+
+| 路径 | 行为 |
+| --- | --- |
+| 拨号失败（含 651 这类中途失败） | 对返回的非 NULL 句柄调用 `hang_up_and_wait()` |
+| 挂断之后 | 轮询 `RasGetConnectStatusW` 直到句柄失效（上限 5s），确认端口真正释放后才允许重试 |
+| 拨号返回 756 | 枚举连接表，挂断"同条目且 `connected == false`"的连接；成功则**重置退避**立即重试 |
+| 连续 3 次 756 且无可挂断对象 | 打 WARN 指明出路（`net stop RasMan` / 重启）——此时端口卡在 RasMan 内部，连接表里看不见 |
+| 拨号超时（watchdog） | 改为枚举 + 挂断该条目那次拨号（不再使用 `RasHangUpW(NULL)`） |
+| `sc stop` 停止服务 | **不变**：不触碰任何连接 |
+
+判据被抽成纯函数 `ras::is_stale_attempt(info, entry)`（同条目 && 未连接），单测覆盖
+"大小写不敏感""在线连接绝不动""其它条目不动"三种边界。
 
 ### 9.6 `HRASCONN` 非 `Send` 的处理（v0.2 简化）
 

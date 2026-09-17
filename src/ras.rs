@@ -31,6 +31,7 @@ use windows::core::PCWSTR;
 
 use crate::config::DialConfig;
 use crate::error::{Result, err, os_err};
+use crate::logger::{log_info, log_warn};
 
 /// `ERROR_MORE_DATA` - returned by `RasEnumConnectionsW` when the buffer filled up.
 const ERROR_MORE_DATA: u32 = 234;
@@ -96,16 +97,21 @@ pub struct Dialed {
 }
 
 impl Dialed {
-    /// Hang the connection up.
+    /// Hang the connection up and wait until the port is released.
     ///
-    /// Used by the `dial-once` diagnostic command only; the service itself
-    /// never hangs a connection up, so that stopping the service keeps the
-    /// broadband link online.
+    /// Used by the `dial-once` diagnostic command. The service itself only hangs
+    /// up failed or stale attempts, so that stopping it keeps the broadband link
+    /// online.
+    ///
+    /// The wait matters: the documentation warns that exiting the process, or
+    /// dialling again, immediately after `RasHangUp` can leave the PPPoE port in
+    /// an inconsistent state - which is exactly the "port already open" failure.
     pub fn hang_up(self) -> Result<()> {
         let rc = unsafe { RasHangUpW(self.conn) };
         if rc != 0 {
             return Err(os_err("RasHangUpW", rc));
         }
+        wait_for_release(self.conn);
         Ok(())
     }
 }
@@ -165,6 +171,8 @@ pub fn dial(cfg: &DialConfig, timeout: Duration) -> Result<Dialed> {
     // `Send` without wrapping anything in `Arc`.
     let done_raw = done.0 as isize;
     let timeout_ms = duration_to_millis(timeout);
+    // The watchdog needs the entry name to find the attempt it has to cancel.
+    let entry_for_watchdog = cfg.entry_name.clone();
 
     let watchdog = std::thread::Builder::new()
         .name(String::from("dial-timeout"))
@@ -173,12 +181,14 @@ pub fn dial(cfg: &DialConfig, timeout: Duration) -> Result<Dialed> {
             let done = HANDLE(done_raw as *mut core::ffi::c_void);
             let rc = unsafe { WaitForSingleObject(done, timeout_ms) };
             if rc == WAIT_TIMEOUT {
-                // Still dialling after the deadline: interrupt the attempt.
-                // A NULL handle drops every connection owned by this process,
-                // which can only be the in-flight attempt because the service
-                // holds no other handle.
-                unsafe {
-                    let _ = RasHangUpW(HRASCONN::default());
+                // Still dialling after the deadline. A synchronous `RasDialW`
+                // does not hand out its handle until it returns, so the attempt
+                // has to be cancelled through the connection table - the
+                // documented route, since `RasHangUp` accepts handles from
+                // `RasEnumConnections` as well. A NULL handle is deliberately
+                // not used: its meaning is not part of the public documentation.
+                if let Err(e) = abort_stale_attempts(&entry_for_watchdog) {
+                    log_warn!("cannot cancel the dial attempt that timed out: {e}");
                 }
             }
         })
@@ -200,6 +210,12 @@ pub fn dial(cfg: &DialConfig, timeout: Duration) -> Result<Dialed> {
     }
 
     if rc != 0 {
+        // `RasDialW` hands back a handle even when it fails, and the
+        // documentation requires it to be hung up: "even if RasDial returns a
+        // nonzero value". Without this the PPPoE port stays half open and every
+        // later attempt for this entry is rejected with 756
+        // (ERROR_DIAL_ALREADY_IN_PROGRESS) until the RAS manager is restarted.
+        hang_up_and_wait(conn);
         // The code is preserved so the worker can decide whether retrying makes
         // sense; the message never carries credentials.
         return Err(Box::new(RasFailure { code: rc, context: "RasDialW" }));
@@ -207,12 +223,16 @@ pub fn dial(cfg: &DialConfig, timeout: Duration) -> Result<Dialed> {
     Ok(Dialed { conn })
 }
 
-/// Enumerate the connections currently known to RAS.
+/// Enumerate every connection RAS knows about, together with the handle that
+/// identifies it.
+///
+/// The handles must not leave the calling thread: `HRASCONN` wraps a raw
+/// pointer and is therefore not `Send`.
 ///
 /// The buffer has to be sized from the value RAS reports for a `NULL` array,
 /// and it may still be too small on the next call (connections come and go), so
 /// `ERROR_BUFFER_TOO_SMALL` is handled instead of assumed away.
-pub fn list_connections() -> Result<Vec<ConnectionInfo>> {
+fn enumerate() -> Result<Vec<(ConnectionInfo, HRASCONN)>> {
     let mut needed: u32 = 0;
     let mut count: u32 = 0;
     let rc = unsafe { RasEnumConnectionsW(None, &mut needed, &mut count) };
@@ -251,9 +271,103 @@ pub fn list_connections() -> Result<Vec<ConnectionInfo>> {
     Err(err("RasEnumConnectionsW: buffer still too small after retries"))
 }
 
+/// Enumerate the connections currently known to RAS.
+pub fn list_connections() -> Result<Vec<ConnectionInfo>> {
+    Ok(enumerate()?.into_iter().map(|(info, _)| info).collect())
+}
+
 /// `true` when an entry with that name is currently in the `Connected` state.
 pub fn is_connected(entry_name: &str) -> Result<bool> {
     Ok(list_connections()?.iter().any(|c| c.connected && c.entry.eq_ignore_ascii_case(entry_name)))
+}
+
+/// A connection is a *stale attempt* when it belongs to `entry_name` but never
+/// reached the `Connected` state: a dial that was interrupted (for example by
+/// the cable being unplugged mid negotiation) or cancelled by the watchdog.
+fn is_stale_attempt(info: &ConnectionInfo, entry_name: &str) -> bool {
+    !info.connected && info.entry.eq_ignore_ascii_case(entry_name)
+}
+
+/// Compact description of a connection table for log records.
+///
+/// Same style as `link::describe`, and like it free of credentials: only the
+/// entry name, the device and the state are included.
+pub fn describe_connections(connections: &[ConnectionInfo]) -> String {
+    if connections.is_empty() {
+        return String::from("[]");
+    }
+    let mut out = String::from("[");
+    for (index, info) in connections.iter().enumerate() {
+        if index > 0 {
+            out.push_str(", ");
+        }
+        out.push_str(&format!(
+            "{{entry:\"{}\", device:\"{}\", state:{}, connected:{}}}",
+            info.entry, info.device, info.state, info.connected
+        ));
+    }
+    out.push(']');
+    out
+}
+
+/// Poll until RAS reports the handle as invalid, i.e. the port is released.
+///
+/// The documentation recommends this over a blind `Sleep(3000)` after
+/// `RasHangUp`: it returns as soon as the state machine is done, and it is
+/// bounded so a driver that never lets go cannot block the caller forever.
+fn wait_for_release(conn: HRASCONN) {
+    // Bounded: 50 * 100 ms = at most 5 seconds.
+    const POLLS: usize = 50;
+    const INTERVAL: Duration = Duration::from_millis(100);
+
+    for _ in 0..POLLS {
+        let mut status = RASCONNSTATUSW {
+            dwSize: std::mem::size_of::<RASCONNSTATUSW>() as u32,
+            ..Default::default()
+        };
+        // Any failure means the handle is gone, i.e. the port is free again.
+        if unsafe { RasGetConnectStatusW(conn, &mut status) } != 0 {
+            return;
+        }
+        std::thread::sleep(INTERVAL);
+    }
+}
+
+/// Hang a connection up and wait until RAS has really released the port.
+fn hang_up_and_wait(conn: HRASCONN) {
+    if conn.0.is_null() {
+        return;
+    }
+    if unsafe { RasHangUpW(conn) } != 0 {
+        return;
+    }
+    wait_for_release(conn);
+}
+
+/// Hang up every connection for `entry_name` that never reached the `Connected`
+/// state, and report how many were aborted.
+///
+/// This is the way out of `ERROR_DIAL_ALREADY_IN_PROGRESS` (756): a dial that
+/// was interrupted leaves the PPPoE port busy, and every later attempt for the
+/// same entry is rejected until something hangs the stale attempt up. Only
+/// connections that are *not* online are touched, so a working broadband link is
+/// never dropped.
+pub fn abort_stale_attempts(entry_name: &str) -> Result<usize> {
+    let mut aborted = 0usize;
+    for (info, handle) in enumerate()? {
+        if !is_stale_attempt(&info, entry_name) {
+            continue;
+        }
+        log_info!(
+            "aborting a stale dial attempt: entry=\"{}\" device=\"{}\" state={}",
+            info.entry,
+            info.device,
+            info.state
+        );
+        hang_up_and_wait(handle);
+        aborted += 1;
+    }
+    Ok(aborted)
 }
 
 /// Create the phone book entry if it does not exist yet.
@@ -371,7 +485,7 @@ pub fn describe_error(code: u32) -> ErrorInfo {
     ErrorInfo { code, message, retryable }
 }
 
-fn collect(buffer: &[RASCONNW], count: u32) -> Vec<ConnectionInfo> {
+fn collect(buffer: &[RASCONNW], count: u32) -> Vec<(ConnectionInfo, HRASCONN)> {
     let limit = (count as usize).min(buffer.len());
     let mut out = Vec::with_capacity(limit);
     for item in buffer.iter().take(limit) {
@@ -380,12 +494,15 @@ fn collect(buffer: &[RASCONNW], count: u32) -> Vec<ConnectionInfo> {
         let entry: [u16; 257] = item.szEntryName;
         let device: [u16; 129] = item.szDeviceName;
         let state = connection_state(item.hrasconn).unwrap_or(0);
-        out.push(ConnectionInfo {
-            entry: crate::link::wide_to_string(&entry),
-            device: crate::link::wide_to_string(&device),
-            state,
-            connected: state == RASCS_Connected.0 as u32,
-        });
+        out.push((
+            ConnectionInfo {
+                entry: crate::link::wide_to_string(&entry),
+                device: crate::link::wide_to_string(&device),
+                state,
+                connected: state == RASCS_Connected.0 as u32,
+            },
+            item.hrasconn,
+        ));
     }
     out
 }
@@ -481,5 +598,37 @@ mod tests {
     fn timeout_conversion_saturates() {
         assert_eq!(duration_to_millis(Duration::from_millis(1500)), 1500);
         assert_eq!(duration_to_millis(Duration::from_secs(u64::MAX)), u32::MAX);
+    }
+
+    fn connection(entry: &str, connected: bool) -> ConnectionInfo {
+        ConnectionInfo {
+            entry: String::from(entry),
+            device: String::from("WAN Miniport (PPPOE)"),
+            state: if connected { RASCS_Connected.0 as u32 } else { 0 },
+            connected,
+        }
+    }
+
+    #[test]
+    fn only_unconnected_connections_of_our_entry_are_stale() {
+        let attempt = connection("Dr.COM", false);
+        let online = connection("Dr.COM", true);
+        let other = connection("SomethingElse", false);
+
+        assert!(is_stale_attempt(&attempt, "Dr.COM"));
+        // RAS compares entry names case insensitively, and so must we.
+        assert!(is_stale_attempt(&attempt, "dr.com"));
+        // A working broadband link must never be touched.
+        assert!(!is_stale_attempt(&online, "Dr.COM"));
+        // Another entry is none of our business.
+        assert!(!is_stale_attempt(&other, "Dr.COM"));
+    }
+
+    #[test]
+    fn connection_description_is_stable() {
+        assert_eq!(describe_connections(&[]), "[]");
+        let text = describe_connections(&[connection("Dr.COM", false)]);
+        assert!(text.contains("entry:\"Dr.COM\""));
+        assert!(text.contains("connected:false"));
     }
 }
