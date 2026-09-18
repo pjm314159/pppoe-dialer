@@ -24,7 +24,7 @@
 
 use std::ffi::c_void;
 
-use windows::Win32::Foundation::{BOOLEAN, ERROR_SUCCESS, HANDLE};
+use windows::Win32::Foundation::{ERROR_SUCCESS, HANDLE};
 use windows::Win32::NetworkManagement::IpHelper::{
     CancelMibChangeNotify2, FreeMibTable, GetIfTable2, IF_TYPE_ETHERNET_CSMACD, MIB_IF_TABLE2,
     MIB_IPINTERFACE_ROW, MIB_NOTIFICATION_TYPE, NotifyIpInterfaceChange,
@@ -158,7 +158,7 @@ fn snapshot_filtered(if_types: Option<&[u32]>) -> Result<Vec<AdapterInfo>> {
 /// Interfaces reporting an unknown media state are never counted as connected;
 /// if *no* remaining interface reports a media state at all, the verdict falls
 /// back to `OperStatus` so that an unusual driver cannot keep the service from
-/// ever dialling.
+/// ever dialing.
 pub fn check(if_types: &[u32], filter: &str) -> Result<LinkStatus> {
     let adapters = snapshot(if_types)?;
     let filter = filter.trim().to_lowercase();
@@ -214,7 +214,7 @@ pub fn check(if_types: &[u32], filter: &str) -> Result<LinkStatus> {
     }
 
     // No driver reported a media state: fall back to the operational status so
-    // dialling can still be attempted.
+    // dialing can still be attempted.
     let adapter = matched.iter().find(|a| a.oper_up).or_else(|| matched.first());
     let up = matched.iter().any(|a| a.oper_up);
     let reason = if up {
@@ -257,7 +257,7 @@ pub fn notify(event: HANDLE, initial: bool) -> Result<IpChangeGuard> {
             AF_UNSPEC,
             Some(interface_changed),
             Some(event.0 as *const c_void),
-            BOOLEAN::from(initial),
+            initial,
             &mut handle,
         )
     };

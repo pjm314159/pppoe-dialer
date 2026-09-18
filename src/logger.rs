@@ -24,7 +24,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use windows::Win32::Foundation::HANDLE;
-use windows::Win32::Security::PSID;
 use windows::Win32::System::EventLog::{
     DeregisterEventSource, EVENTLOG_ERROR_TYPE, EVENTLOG_INFORMATION_TYPE, EVENTLOG_WARNING_TYPE,
     REPORT_EVENT_TYPE, RegisterEventSourceW, ReportEventW,
@@ -290,10 +289,7 @@ fn redact(logger: &Logger, args: std::fmt::Arguments<'_>) -> (String, bool) {
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     // A poisoned logger must not take the whole service down.
-    match mutex.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    }
+    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 impl Sink {
@@ -354,7 +350,7 @@ impl Sink {
                 level.event_type(),
                 0,
                 event_id,
-                PSID::default(),
+                None,
                 0,
                 Some(&strings),
                 None,

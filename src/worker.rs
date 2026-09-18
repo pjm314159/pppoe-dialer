@@ -28,7 +28,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use windows::Win32::Foundation::{BOOL, CloseHandle, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
 use windows::Win32::NetworkManagement::Rras::ERROR_DIAL_ALREADY_IN_PROGRESS;
 use windows::Win32::System::Threading::{CreateEventW, INFINITE, WaitForMultipleObjects};
 use windows::core::PCWSTR;
@@ -52,7 +52,7 @@ const STALE_BLOCK_WARN_AFTER: u32 = 3;
 /// `manual_reset = true` is used for the stop event (it must stay signalled);
 /// auto reset events are used for the notification events.
 pub fn create_event(manual_reset: bool) -> Result<HANDLE> {
-    unsafe { CreateEventW(None, BOOL::from(manual_reset), BOOL::from(false), PCWSTR::null()) }
+    unsafe { CreateEventW(None, manual_reset, false, PCWSTR::null()) }
         .map_err(|e| err(format!("CreateEventW failed: {e}")))
 }
 
@@ -80,7 +80,7 @@ impl Waiter {
         // `stop` must be the first handle: WaitForMultipleObjects reports the
         // lowest signalled index, so a stop request always wins.
         let handles = [self.stop, self.link, self.ras];
-        let rc = unsafe { WaitForMultipleObjects(&handles, BOOL::from(false), timeout_ms) };
+        let rc = unsafe { WaitForMultipleObjects(&handles, false, timeout_ms) };
         if rc.0 == WAIT_OBJECT_0.0 {
             Wake::Stop
         } else if rc.0 == WAIT_OBJECT_0.0 + 1 || rc.0 == WAIT_OBJECT_0.0 + 2 {

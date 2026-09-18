@@ -34,9 +34,10 @@ use std::ffi::c_void;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicIsize, Ordering};
 
-use windows::Win32::Foundation::{BOOL, HANDLE, TRUE};
+use windows::Win32::Foundation::{HANDLE, TRUE};
 use windows::Win32::System::Console::{SetConsoleCtrlHandler, SetConsoleOutputCP};
 use windows::Win32::System::Threading::SetEvent;
+use windows::core::BOOL;
 
 use crate::config::Config;
 use crate::error::{Result, err};
@@ -132,7 +133,7 @@ fn run_console(args: &[String]) -> Result<()> {
 
     let stop = worker::create_event(true)?;
     CONSOLE_STOP.store(stop.0 as isize, Ordering::SeqCst);
-    unsafe { SetConsoleCtrlHandler(Some(console_ctrl_handler), BOOL::from(true)) }
+    unsafe { SetConsoleCtrlHandler(Some(console_ctrl_handler), true) }
         .map_err(|e| err(format!("SetConsoleCtrlHandler failed: {e}")))?;
 
     let handle = worker::spawn(Arc::new(config), stop.0 as isize)?;

@@ -5,7 +5,7 @@
 //! ------------
 //! * **No polling.** Connection changes are delivered through
 //!   `RasConnectionNotificationW` registered with `INVALID_HANDLE_VALUE`
-//!   (system wide mode), which signals a Win32 event when *any* RAS connection
+//!   (system-wide mode), which signals a Win32 event when *any* RAS connection
 //!   is created or terminated. `RasEnumConnectionsW` is only called once per
 //!   notification to learn *which* connection changed.
 //! * **No connection handle is kept.** Because the notification is registered
@@ -18,7 +18,7 @@
 
 use std::time::Duration;
 
-use windows::Win32::Foundation::{BOOL, CloseHandle, HANDLE, WAIT_TIMEOUT};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_TIMEOUT};
 use windows::Win32::NetworkManagement::Rras::{
     ERROR_BUFFER_TOO_SMALL, ERROR_CANNOT_FIND_PHONEBOOK_ENTRY, HRASCONN, RASCN_Connection,
     RASCN_Disconnection, RASCONNSTATUSW, RASCONNW, RASCS_Connected, RASDIALPARAMSW, RASENTRYW,
@@ -149,10 +149,8 @@ pub fn dial(cfg: &DialConfig, timeout: Duration) -> Result<Dialed> {
     let password = to_wide(&cfg.password);
     let domain = to_wide(&cfg.domain);
 
-    let mut params = RASDIALPARAMSW {
-        dwSize: std::mem::size_of::<RASDIALPARAMSW>() as u32,
-        ..Default::default()
-    };
+    let mut params =
+        RASDIALPARAMSW { dwSize: size_of::<RASDIALPARAMSW>() as u32, ..Default::default() };
     copy_to_buf(&mut params.szEntryName, &entry);
     copy_to_buf(&mut params.szUserName, &user);
     copy_to_buf(&mut params.szPassword, &password);
@@ -165,7 +163,7 @@ pub fn dial(cfg: &DialConfig, timeout: Duration) -> Result<Dialed> {
         PCWSTR::from_raw(pbk.as_ptr())
     };
 
-    let done = unsafe { CreateEventW(None, BOOL::from(false), BOOL::from(false), PCWSTR::null()) }
+    let done = unsafe { CreateEventW(None, false, false, PCWSTR::null()) }
         .map_err(|e| err(format!("CreateEventW failed: {e}")))?;
     // The watchdog thread only needs the raw handle value, which keeps it
     // `Send` without wrapping anything in `Arc`.
@@ -243,7 +241,7 @@ fn enumerate() -> Result<Vec<(ConnectionInfo, HRASCONN)>> {
         return Err(os_err("RasEnumConnectionsW", rc));
     }
 
-    let entry_size = std::mem::size_of::<RASCONNW>();
+    let entry_size = size_of::<RASCONNW>();
     let mut needed = needed.max(entry_size as u32);
 
     for _ in 0..MAX_ENUM_ATTEMPTS {
@@ -321,10 +319,8 @@ fn wait_for_release(conn: HRASCONN) {
     const INTERVAL: Duration = Duration::from_millis(100);
 
     for _ in 0..POLLS {
-        let mut status = RASCONNSTATUSW {
-            dwSize: std::mem::size_of::<RASCONNSTATUSW>() as u32,
-            ..Default::default()
-        };
+        let mut status =
+            RASCONNSTATUSW { dwSize: size_of::<RASCONNSTATUSW>() as u32, ..Default::default() };
         // Any failure means the handle is gone, i.e. the port is free again.
         if unsafe { RasGetConnectStatusW(conn, &mut status) } != 0 {
             return;
@@ -406,8 +402,7 @@ pub fn ensure_entry(cfg: &DialConfig) -> Result<bool> {
     // as a hand made one in
     // `%ProgramData%\Microsoft\Network\Connections\Pbk\rasphone.pbk`:
     // `Type=5`, `DEVICE=PPPoE`, `Device=WAN Miniport (PPPOE)`.
-    let mut template =
-        RASENTRYW { dwSize: std::mem::size_of::<RASENTRYW>() as u32, ..Default::default() };
+    let mut template = RASENTRYW { dwSize: size_of::<RASENTRYW>() as u32, ..Default::default() };
 
     // `RASET_Broadband` (5) is what a PPPoE entry must be; `RASET_Phone` (1)
     // would produce a dial-up style entry. The phone book stores this as
@@ -447,7 +442,7 @@ pub fn ensure_entry(cfg: &DialConfig) -> Result<bool> {
             pbk_ptr,
             entry_ptr,
             &template,
-            std::mem::size_of::<RASENTRYW>() as u32,
+            size_of::<RASENTRYW>() as u32,
             None,
             0,
         )
@@ -508,10 +503,8 @@ fn collect(buffer: &[RASCONNW], count: u32) -> Vec<(ConnectionInfo, HRASCONN)> {
 }
 
 fn connection_state(conn: HRASCONN) -> Option<u32> {
-    let mut status = RASCONNSTATUSW {
-        dwSize: std::mem::size_of::<RASCONNSTATUSW>() as u32,
-        ..Default::default()
-    };
+    let mut status =
+        RASCONNSTATUSW { dwSize: size_of::<RASCONNSTATUSW>() as u32, ..Default::default() };
     let rc = unsafe { RasGetConnectStatusW(conn, &mut status) };
     if rc != 0 {
         return None;
