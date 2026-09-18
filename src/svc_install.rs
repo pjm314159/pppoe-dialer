@@ -325,7 +325,7 @@ fn status_bytes(status: &mut SERVICE_STATUS_PROCESS) -> &mut [u8] {
     unsafe {
         std::slice::from_raw_parts_mut(
             status as *mut SERVICE_STATUS_PROCESS as *mut u8,
-            std::mem::size_of::<SERVICE_STATUS_PROCESS>(),
+            size_of::<SERVICE_STATUS_PROCESS>(),
         )
     }
 }
@@ -379,7 +379,7 @@ fn register_event_source(name: &str) -> Result<()> {
         RegCreateKeyExW(
             HKEY_LOCAL_MACHINE,
             PCWSTR::from_raw(path_w.as_ptr()),
-            0,
+            None,
             PCWSTR::null(),
             REG_OPTION_NON_VOLATILE,
             KEY_WRITE,
@@ -399,7 +399,7 @@ fn register_event_source(name: &str) -> Result<()> {
         RegSetValueExW(
             key,
             PCWSTR::from_raw(value_name.as_ptr()),
-            0,
+            None,
             REG_EXPAND_SZ,
             Some(wide_as_bytes(&message_file)),
         )
@@ -415,7 +415,7 @@ fn register_event_source(name: &str) -> Result<()> {
             RegSetValueExW(
                 key,
                 PCWSTR::from_raw(types_name.as_ptr()),
-                0,
+                None,
                 REG_DWORD,
                 Some(&supported),
             )

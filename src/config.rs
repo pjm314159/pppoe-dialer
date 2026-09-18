@@ -417,7 +417,7 @@ password = "secret-9"
     /// Tests return `Result` and use `?` instead of `unwrap()`/`expect()`, so the
     /// `clippy::unwrap_used` / `clippy::expect_used` denies hold for test code
     /// as well and no test can abort on an unwrap.
-    type TestResult = crate::error::Result<()>;
+    type TestResult = Result<()>;
 
     #[test]
     fn defaults_are_applied() -> TestResult {

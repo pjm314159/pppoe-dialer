@@ -14,7 +14,7 @@ license = "GPL-3.0-or-later"
 # Everything else (logging, service dispatching, error handling, back-off) is
 # implemented in-tree. No async runtime, no logging framework, no `anyhow`.
 [dependencies]
-windows = { version = "0.58", features = [
+windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_NetworkManagement_IpHelper",
     "Win32_NetworkManagement_Ndis",
@@ -29,7 +29,7 @@ windows = { version = "0.58", features = [
     "Win32_System_Threading",
 ] }
 serde = { version = "1", features = ["derive"] }
-toml = "0.8"
+toml = "1.1.6"
 
 # Hard guarantees enforced by the compiler, not by review. The release profile
 # uses `panic = "abort"`, so there is no unwind net: an accidental unwrap or

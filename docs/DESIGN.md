@@ -97,8 +97,8 @@ pppoe/
 | 类别 | 选型 | 理由 |
 | --- | --- | --- |
 | 服务框架 | **自研**（`StartServiceCtrlDispatcherW` / `RegisterServiceCtrlHandlerExW` / `SetServiceStatus`） | 全部加起来约 200 行，反而比引入 `windows-service` 更小；少一个依赖、少一次网络拉取 |
-| 系统 API | `windows = "0.58"`（沿用） | features：`Win32_Foundation`、`Win32_NetworkManagement_Rras`、`Win32_NetworkManagement_IpHelper`、`Win32_NetworkManagement_Ndis`、`Win32_Networking_WinSock`、`Win32_Security`、`Win32_System_Console`、`Win32_System_EventLog`、`Win32_System_Registry`、`Win32_System_Services`、`Win32_System_SystemInformation`、`Win32_System_Threading` |
-| 配置 | `serde`（derive）+ `toml = "0.8"` | 声明式反序列化，`#[serde(default)]` + `Default` 实现保证新增字段向后兼容 |
+| 系统 API | `windows = "0.62"` | features：`Win32_Foundation`、`Win32_NetworkManagement_Rras`、`Win32_NetworkManagement_IpHelper`、`Win32_NetworkManagement_Ndis`、`Win32_Networking_WinSock`、`Win32_Security`、`Win32_System_Console`、`Win32_System_EventLog`、`Win32_System_Registry`、`Win32_System_Services`、`Win32_System_SystemInformation`、`Win32_System_Threading` |
+| 配置 | `serde`（derive）+ `toml = "1.1"` | 声明式反序列化，`#[serde(default)]` + `Default` 实现保证新增字段向后兼容 |
 | 日志 | **自研** `src/logger.rs`（`Mutex<File>` + 手写按天轮转 + `ReportEventW`） | 无后台线程、无通道、无 subscriber 注册表；关掉的记录只花一次整数比较；顺带实现凭据兜底过滤 |
 | 错误处理 | `type Error = Box<dyn std::error::Error + Send + Sync>` | 一行别名即可，无需 `anyhow` / `thiserror` |
 | 并发 | 标准库 `std::thread` + Win32 事件对象 | **不引入 tokio**；`WaitForMultipleObjects` 天然支持"零轮询" |
@@ -519,7 +519,7 @@ pub fn describe_candidates(adapters: &[AdapterInfo]) -> String;  // 只描述非
 
 实现要点：
 
-1. **通知注册**：`NotifyIpInterfaceChange(AF_UNSPEC, Some(cb), ctx, BOOLEAN::from(initial), &mut handle)`，
+1. **通知注册**：`NotifyIpInterfaceChange(AF_UNSPEC, Some(cb), ctx, initial, &mut handle)`，
    `ctx` 传入 `link_event` 的 `HANDLE`（`*const c_void`）；`initial = true` 会立即回调一次，
    相当于免费获得一次"启动即评估"，无需额外轮询。
    `IpChangeGuard::drop` 调用 `CancelMibChangeNotify2(handle)`，
@@ -591,7 +591,7 @@ pub fn to_wide(text: &str) -> Vec<u16>;
    - ⚠️ 该 API **没有公开的注销函数**。因此设计上采取"**进程生命周期内只注册一次**"的策略：
      单个事件对象 + 单次注册，随进程退出而释放；不做"每轮拨号后重新注册"，
      避免注册泄漏（`console` 模式也复用同一约束）。
-   - 已核实 `windows = 0.58` 导出的常量名与数值：
+   - 已核实 `windows = 0.62` 导出的常量名与数值：
      `RASCN_Connection = 1u32`、`RASCN_Disconnection = 2u32`；
      `INVALID_HANDLE_VALUE` 用 `HRASCONN(usize::MAX as *mut c_void)` 构造。
 3. **状态查询（`is_connected`）**：仅在"被事件唤醒"或"刚拨号返回"时调用：
@@ -634,7 +634,7 @@ impl Backoff {
   `RUNNING → STOPPED`，因此去掉了设计中的 `mpsc::Sender<WorkerEvent>`，
   少一条通道、少一份缓冲；
 - `Waiter` 封装三个句柄与
-  `WaitForMultipleObjects([stop, link, ras], wait_all = BOOL::from(false), timeout)`；
+  `WaitForMultipleObjects([stop, link, ras], wait_all = false, timeout)`；
   **`stop` 必须排第一个**，因为该 API 返回最小索引，停止请求永远优先；
 - **超时值**：`safety_recheck_secs == 0` → `INFINITE`（纯事件驱动）；否则用该值，
   超时唤醒时在 debug 日志中标注为"兜底复检"；
